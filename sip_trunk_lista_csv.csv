@@ -1,0 +1,2 @@
+trunk_name,description,device_pool,css,location,sip_profile,security_profile,dest_ip,dest_port
+trunk1,trunk1,Default,none,Hub_None,Standard SIP Profile,Non Secure SIP Trunk Profile,10.10.10.10,5060

@@ -1,0 +1,7 @@
+route_group,device_name,selection_order
+RG1,SIP-TRUNK-03,1
+RG1,SIP-TRUNK-02,2
+RG2,SIP-TRUNK-03,1
+RG2,SIP-TRUNK-02,2
+RG3,SIP-TRUNK-01,1
+RG3,SIP-TRUNK-02,2

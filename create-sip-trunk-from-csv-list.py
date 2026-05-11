@@ -2,6 +2,7 @@ import csv
 import os
 import sys
 import urllib3
+from collections import defaultdict
 from requests import Session
 from requests.auth import HTTPBasicAuth
 from zeep import Client, Settings
@@ -19,7 +20,7 @@ CUCM_ADDRESS = os.getenv("CUCM_ADDRESS")
 USERNAME = os.getenv("AXL_USERNAME")
 PASSWORD = os.getenv("AXL_PASSWORD")
 WSDL_FILE = 'schema/AXLAPI.wsdl'
-CSV_FILE = "sip_trunk_lista_csv.csv"
+CSV_FILE = "routegroup_devices2.csv"
 
 # Validación de variables
 if not all([CUCM_ADDRESS, USERNAME, PASSWORD]):
@@ -30,7 +31,7 @@ if not all([CUCM_ADDRESS, USERNAME, PASSWORD]):
 session = Session()
 session.verify = False
 session.auth = HTTPBasicAuth(USERNAME, PASSWORD)
-transport = Transport(session=session, timeout=20)
+transport = Transport(session=session, timeout=2)
 settings = Settings(strict=False, xml_huge_tree=True)
 
 try:
@@ -43,46 +44,55 @@ except Exception as e:
     print(f"ERROR: No se pudo inicializar el cliente Zeep: {e}")
     sys.exit(1)
 
-# 3. Leer CSV y crear troncales
+# 3. Leer CSV y agrupar devices por Route Group
+route_groups = defaultdict(list)
 
-with open(CSV_FILE, newline='', encoding='utf-8') as csv_file:
-    reader = csv.DictReader(csv_file)
-    for row in reader:
-        trunk_name = row["trunk_name"]
-        print(f"\nCreando SIP TRUNK {trunk_name}")
+try:
+    with open(CSV_FILE, newline='', encoding='utf-8') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            rg = row.get("route_group")
+            device = row.get("device_name")
+            if not rg or not device:
+                continue
 
-        sip_trunk_data = {
-            'name': trunk_name,
-            'description': row['description'],
-            'product': 'SIP Trunk',
-            'class': 'Trunk',
-            'protocol': 'SIP',
-            'protocolSide': 'Network',
-            'devicePoolName': 'Default',
-            'locationName': 'Hub_None',
-            'securityProfileName': 'Non Secure SIP Trunk Profile',
-            'sipProfileName': 'Standard SIP Profile',
-            'presenceGroupName': 'Standard Presence group',
-            'callingAndCalledPartyInfoFormat': 'Deliver DN only in connected party',
+            order = row.get("selection_order", "1")
+            # Estructura requerida por AXL para los miembros del Route Group
+            route_groups[rg].append({
+                'deviceSelectionOrder': order,
+                'deviceName': device,
+                'port': "0"  # Valor por defecto común en AXL
+            })
+except FileNotFoundError:
+    print(f"ERROR: Archivo {CSV_FILE} no encontrado.")
+    sys.exit(1)
 
-            'destinations': []
-        }
+# 4. Procesar y actualizar cada Route Group
+contador = 0
+for rg_name, members in route_groups.items():
+    contador = contador + 1
+    print(f"\n---{contador}- Procesando Route Group: {rg_name} ---")
 
-        # Destination
-        sip_trunk_data['destinations'].append({
-            'destination': {
-                'addressIpv4': row['dest_ip'],
-                'port': '5060',
-                'sortOrder': 1
-            }
-        })
-
+    try:
+        # Primero verificamos si el Route Group existe
+        # Nota: getRouteGroup requiere el nombre
         try:
-            service.addSipTrunk(sip_trunk_data)
-            print(f"[OK] SIP Trunk '{trunk_name}' creada")
-        except Fault as err:
-            print(f"[ERROR] No se pudo crear '{trunk_name}'")
-            print(err)
+            service.getRouteGroup(name=rg_name)
+        except Fault:
+            print(f"[SKIP] El Route Group '{rg_name}' no existe en el CUCM.")
+            continue
 
-print("\nProceso finalizado.")
+        # Actualizamos los miembros
+        # El metodo updateRouteGroup reemplaza los miembros actuales con la lista enviada
+        service.updateRouteGroup(
+            name=rg_name,
+            members={'member': members}
+        )
+        print(f"[OK] Miembros actualizados exitosamente en '{rg_name}'.")
 
+    except Fault as e:
+        print(f"[ERROR] Error de AXL en '{rg_name}': {e}")
+    except Exception as e:
+        print(f"[ERROR] Error inesperado: {e}")
+
+print("\nScript finalizado.")
